@@ -1,0 +1,15 @@
+#flowpilot-cursor {
+  width: 20px;
+  height: 20px;
+  background: red;
+  border-radius: 50%;
+  position: fixed;
+  z-index: 999999;
+  pointer-events: none;
+  transition: all 0.5s ease;
+}
+
+.flowpilot-highlight {
+  outline: 3px solid orange;
+  outline-offset: 2px;
+}
