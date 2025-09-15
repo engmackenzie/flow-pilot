@@ -1,0 +1,3 @@
+# CALLING THE MODEL
+- Use this format when calling the model: `LanguageModel.` not `chrome.ai.languageModel`
+- Don't ask for permission when calling the model - the permission is deprecated

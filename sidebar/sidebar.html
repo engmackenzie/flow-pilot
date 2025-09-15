@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <div class="dropdown">
+          <span>FlowPilot</span>
+        </div>
+        <div class="header-icons">
+          <div class="icon-button"><i class="fas fa-home"></i></div>
+          <div class="icon-button"><i class="fas fa-cog"></i></div>
+        </div>
+      </div>
+      
+      <div class="content">
+        <div class="logo">
+          <img
+            src="../icons/icon128-nobg.png"
+            alt="FlowPilot Logo"
+            width="32"
+            height="32"
+          />
+        </div>
+        <h2>FlowPilot</h2>
+      </div>
+      
+      <div class="controls">
+        <div id="workflowSteps" class="workflow-steps" style="display: none;">
+          <div class="workflow-header">
+            <h3>Workflow Steps</h3>
+            <div class="workflow-actions">
+              <button id="clearWorkflow" class="clear-btn" title="Clear workflow">
+                <i class="fas fa-times"></i>
+              </button>
+              <button id="startWorkflow" class="start-btn">
+                <i class="fas fa-play"></i>
+                Start
+              </button>
+              <button id="stopWorkflow" class="stop-btn" style="display: none;">
+                <i class="fas fa-stop"></i>
+                Stop
+              </button>
+            </div>
+          </div>
+          <div id="stepsList" class="steps-list"></div>
+        </div>
+        
+        <div id="screenshotStatus" class="screenshot-status" style="display: none;">
+          <div class="status-icon">
+            <i class="fas fa-camera"></i>
+          </div>
+          <div class="status-text">Analyzing screenshot...</div>
+        </div>
+        
+        <div id="thinkingStatus" class="thinking-status" style="display: none;">
+          <div class="thinking-spinner">
+            <div class="spinner"></div>
+          </div>
+          <div class="thinking-text">Thinking about your question...</div>
+        </div>
+
+        <div class="input-section">
+          <div class="textarea-container">
+            <textarea id="questionInput" placeholder="How do I place an order? Ask me anything about this page..." rows="3"></textarea>
+            <button id="askButton" class="ask-btn">
+              <i class="fas fa-paper-plane"></i>
+            </button>
+          </div>
+        </div>
+        
+        <div class="capture-section" id="captureSection">
+          <button id="captureButton" class="capture-btn">
+            <div class="capture-icon"><i class="fas fa-play"></i></div>
+            <span>Start Capture</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Download Confirmation Modal -->
+    <div id="downloadModal" class="download-modal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>AI Model Download Required</h3>
+          <button id="closeModal" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-icon">
+            <i class="fas fa-download"></i>
+          </div>
+          <p>To use FlowPilot's AI features, we need to download the AI model to your device.</p>
+          <p><strong>This is a one-time download</strong> that will enable intelligent workflow generation.</p>
+          <div class="modal-details">
+            <div class="detail-item">
+              <i class="fas fa-shield-alt"></i>
+              <span>Runs locally on your device</span>
+            </div>
+            <div class="detail-item">
+              <i class="fas fa-clock"></i>
+              <span>Download takes 1-2 minutes</span>
+            </div>
+            <div class="detail-item">
+              <i class="fas fa-check-circle"></i>
+              <span>No internet required after download</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="cancelDownload" class="cancel-btn">Cancel</button>
+          <button id="confirmDownload" class="confirm-btn">
+            <i class="fas fa-download"></i>
+            Download & Continue
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <script type="module" src="sidebar.js"></script>
+  </body>
+</html>
