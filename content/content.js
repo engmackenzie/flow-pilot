@@ -169,11 +169,25 @@ function executeWorkflow(workflowData) {
     
     if (!element) {
       // Try alternative selectors for common Gmail elements
-      if (step.selector === '[gh="cm"]') {
-        element = document.querySelector('[gh="cm"]') || 
-                 document.querySelector('[aria-label*="Compose"]') ||
-                 document.querySelector('[data-tooltip*="Compose"]') ||
-                 document.querySelector('div[role="button"][aria-label*="Compose"]');
+      const alternativeSelectors = [
+        '[gh="cm"]',
+        '[aria-label*="Compose"]',
+        '[aria-label*="compose"]',
+        '[data-tooltip*="Compose"]',
+        '[data-tooltip*="compose"]',
+        'div[role="button"][aria-label*="Compose"]',
+        'div[role="button"][aria-label*="compose"]',
+        'div.T-I.T-I-KE.L3', // Gmail compose button class
+        'button[aria-label*="Compose"]',
+        'button[aria-label*="compose"]'
+      ];
+      
+      for (const selector of alternativeSelectors) {
+        element = document.querySelector(selector);
+        if (element) {
+          console.log(`FlowPilot: Found element with alternative selector: ${selector}`);
+          break;
+        }
       }
     }
     
@@ -199,7 +213,22 @@ function executeWorkflow(workflowData) {
       }, 1500);
     } else {
       console.warn("FlowPilot: Element not found for click:", step.selector);
-      console.log("FlowPilot: Available buttons:", document.querySelectorAll('button, [role="button"]'));
+      
+      // Log available buttons for debugging
+      const buttons = document.querySelectorAll('button, [role="button"], div[role="button"]');
+      console.log("FlowPilot: Available buttons:", buttons);
+      
+      // Log specific Gmail compose elements
+      const gmailElements = document.querySelectorAll('[aria-label*="Compose"], [aria-label*="compose"], [data-tooltip*="Compose"]');
+      console.log("FlowPilot: Gmail compose elements:", gmailElements);
+      
+      // Notify step error
+      chrome.runtime.sendMessage({ 
+        type: "stepError", 
+        stepIndex: currentStep, 
+        message: `Element not found for click: ${step.selector}` 
+      });
+      
       currentStep++;
       setTimeout(executeNextStep, 500);
     }
@@ -315,6 +344,11 @@ function extractHTML() {
 
 // Listen for popup commands
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "ping") {
+    // Respond to ping to confirm content script is ready
+    sendResponse({ status: "ready" });
+    return true;
+  }
   if (msg.type === "startRecording") startRecording();
   if (msg.type === "stopRecording") stopRecording();
   if (msg.type === "replayWorkflow") {
@@ -323,7 +357,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
   }
   if (msg.type === "executeWorkflow") {
-    executeWorkflow(msg.data);
+    console.log("FlowPilot: Content script received executeWorkflow message");
+    try {
+      executeWorkflow(msg.data);
+      // Send response back to confirm receipt
+      sendResponse({ status: "workflow_started", stepCount: msg.data.steps ? msg.data.steps.length : 0 });
+    } catch (error) {
+      console.error("FlowPilot: Error executing workflow:", error);
+      sendResponse({ status: "error", error: error.message });
+    }
+    return true; // Indicate we will send a response asynchronously
+  }
+  if (msg.type === "stopWorkflow") {
+    stopWorkflow();
   }
   if (msg.type === "getHTML") {
     const htmlData = extractHTML();

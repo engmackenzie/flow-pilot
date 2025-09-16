@@ -1,5 +1,6 @@
 import { getInitialPrompt } from '../utils/getIntialPrompt.js';
 import { getWorkflowPrompt } from '../utils/getWorkflowPrompt.js';
+import { extractInteractiveElements, getExtractionStats } from '../utils/interactiveElementsExtractor.js';
 
 let isRecording = false;
 
@@ -133,12 +134,12 @@ async function handleQuestion(question) {
   
   try {
     // Get current tab and capture screenshot + HTML
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      const currentUrl = tabs[0].url;
+  chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+    const currentUrl = tabs[0].url;
       console.log("Got current tab", { url: currentUrl, tabId: tabs[0].id });
     
-      // Capture screenshot and HTML for analysis
-      captureScreenshotAndHTML(tabs[0].id, async (screenshotData, htmlData) => {
+    // Capture screenshot and HTML for analysis
+    captureScreenshotAndHTML(tabs[0].id, async (screenshotData, htmlData) => {
         console.log("Screenshot and HTML captured", { 
           hasScreenshot: !!screenshotData, 
           htmlLength: htmlData ? htmlData.length : 0 
@@ -204,16 +205,57 @@ function captureScreenshotAndHTML(tabId, callback) {
     
     console.log("FlowPilot: Screenshot captured successfully");
     
-    // Get HTML from content script
-    chrome.tabs.sendMessage(tabId, { type: "getHTML" }, (htmlData) => {
+    // First check if content script is ready, then get HTML
+    chrome.tabs.sendMessage(tabId, { type: "ping" }, (response) => {
       if (chrome.runtime.lastError) {
-        console.error("FlowPilot: HTML extraction error:", chrome.runtime.lastError);
+        console.log("FlowPilot: Content script not ready for HTML extraction, injecting...");
+        
+        // Inject content script if needed
+        chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          files: ['content/content.js']
+        }, () => {
+          if (chrome.runtime.lastError) {
+            console.error("FlowPilot: Error injecting content script for HTML:", chrome.runtime.lastError);
         callback(screenshotData, null);
+            return;
+          }
+          
+          // Wait for script to load, then get HTML
+          setTimeout(() => {
+            getHTMLFromContentScript(tabId, screenshotData, callback);
+          }, 500);
+        });
       } else {
-        console.log("FlowPilot: HTML extracted successfully, length:", htmlData ? htmlData.length : 0);
-        callback(screenshotData, htmlData);
+        // Content script is ready, get HTML directly
+        getHTMLFromContentScript(tabId, screenshotData, callback);
       }
     });
+  });
+}
+
+function getHTMLFromContentScript(tabId, screenshotData, callback) {
+  chrome.tabs.sendMessage(tabId, { type: "getHTML" }, (htmlData) => {
+    if (chrome.runtime.lastError) {
+      console.error("FlowPilot: HTML extraction error:", chrome.runtime.lastError);
+      callback(screenshotData, null);
+    } else {
+      console.log("FlowPilot: HTML extracted successfully, length:", htmlData ? htmlData.length : 0);
+      
+      // Extract interactive elements instead of sending full HTML
+      if (htmlData && htmlData.length > 0) {
+        // Get current URL for context-aware extraction
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          const currentUrl = tabs[0] ? tabs[0].url : '';
+          const interactiveElements = extractInteractiveElements(htmlData, currentUrl);
+          const stats = getExtractionStats(htmlData.length, interactiveElements.length);
+          console.log("FlowPilot: Interactive elements extraction stats:", stats);
+          callback(screenshotData, interactiveElements);
+        });
+      } else {
+        callback(screenshotData, htmlData);
+      }
+    }
   });
 }
 
@@ -226,7 +268,7 @@ function getStoredWorkflows(question, url) {
 }
 
 // Get AI workflow response with all context
-async function getAIWorkflowResponse(question, url, screenshotData, htmlData, storedWorkflows) {
+async function getAIWorkflowResponse(question, url, screenshotData, interactiveElementsData, storedWorkflows) {
   try {
     // Check if AI session is ready
     if (!isAISessionReady || !aiSession) {
@@ -236,8 +278,8 @@ async function getAIWorkflowResponse(question, url, screenshotData, htmlData, st
 
     console.log(`FlowPilot: Using existing AI session. Usage: ${aiSession.inputUsage}/${aiSession.inputQuota}`);
 
-    // Create the prompt with all context
-    const prompt = getWorkflowPrompt(question, url, screenshotData, htmlData, storedWorkflows);
+    // Create the prompt with interactive elements data
+    const prompt = getWorkflowPrompt(question, url, screenshotData, interactiveElementsData, storedWorkflows);
     
     // Get AI response with timeout handling
     const controller = new AbortController();
@@ -246,9 +288,9 @@ async function getAIWorkflowResponse(question, url, screenshotData, htmlData, st
     try {
       const response = await aiSession.prompt(prompt, { signal: controller.signal });
       clearTimeout(timeoutId);
-    console.log("FlowPilot: AI response:", response);
-    
-    // Parse the response
+      console.log("FlowPilot: AI response:", response);
+      
+      // Parse the response
       return parseWorkflowResponse(response);
     } catch (promptError) {
       clearTimeout(timeoutId);
@@ -508,7 +550,7 @@ function executeWorkflow(workflow) {
   captureSection.style.display = 'none';
   
   // Send workflow to content script with retry logic
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     console.log("FlowPilot: Executing workflow:", workflow);
     
     // First, try to ping the content script to see if it's ready
@@ -523,6 +565,10 @@ function executeWorkflow(workflow) {
         }, () => {
           if (chrome.runtime.lastError) {
             console.error("FlowPilot: Error injecting content script:", chrome.runtime.lastError);
+            
+            // Show user-friendly error message
+            alert(`FlowPilot cannot access this page: ${chrome.runtime.lastError.message}\n\nPlease try on a different page or check if the extension has permission to access this site.`);
+            
             stopWorkflowExecution();
             return;
           }
@@ -541,15 +587,134 @@ function executeWorkflow(workflow) {
 }
 
 function sendWorkflowToContentScript(tabId, workflow) {
+  // Add timeout to prevent hanging
+  const timeoutId = setTimeout(() => {
+    console.error("FlowPilot: Workflow send timeout");
+    stopWorkflowExecution();
+  }, 15000); // 15 second timeout
+  
+  // First, ensure content script is ready
+  ensureContentScriptReady(tabId, () => {
+    // Double-check content script is still ready before sending workflow
+    chrome.tabs.sendMessage(tabId, { type: "ping" }, (pingResponse) => {
+      if (chrome.runtime.lastError) {
+        console.error("FlowPilot: Content script lost connection, re-injecting...");
+        // Re-inject and try again
+        chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          files: ['content/content.js']
+        }, () => {
+          if (chrome.runtime.lastError) {
+            console.error("FlowPilot: Re-injection failed:", chrome.runtime.lastError);
+            stopWorkflowExecution();
+            return;
+          }
+          
+          // Wait a moment and try sending workflow
+          setTimeout(() => {
+            sendWorkflowWithRetry(tabId, workflow, timeoutId);
+          }, 1000);
+        });
+      } else {
+        // Content script is ready, send workflow
+        sendWorkflowWithRetry(tabId, workflow, timeoutId);
+      }
+    });
+  });
+}
+
+function sendWorkflowWithRetry(tabId, workflow, timeoutId) {
   chrome.tabs.sendMessage(tabId, { 
     type: "executeWorkflow", 
     data: workflow 
   }, (response) => {
+    clearTimeout(timeoutId);
+    
     if (chrome.runtime.lastError) {
       console.error("FlowPilot: Error sending workflow:", chrome.runtime.lastError);
-      stopWorkflowExecution();
+      
+      // Try one more time with a fresh ping
+      console.log("FlowPilot: Attempting final retry...");
+      chrome.tabs.sendMessage(tabId, { type: "ping" }, (finalPingResponse) => {
+        if (chrome.runtime.lastError) {
+          console.error("FlowPilot: Final retry failed - content script not responding");
+          stopWorkflowExecution();
+        } else {
+          // Content script is responding, try workflow again
+          chrome.tabs.sendMessage(tabId, { 
+            type: "executeWorkflow", 
+            data: workflow 
+          }, (finalResponse) => {
+            if (chrome.runtime.lastError) {
+              console.error("FlowPilot: Final workflow send failed:", chrome.runtime.lastError);
+              stopWorkflowExecution();
+            } else {
+              console.log("FlowPilot: Workflow sent successfully on final retry");
+              if (finalResponse && finalResponse.status) {
+                console.log("FlowPilot: Content script response:", finalResponse);
+              }
+            }
+          });
+        }
+      });
     } else {
       console.log("FlowPilot: Workflow sent successfully");
+      if (response && response.status) {
+        console.log("FlowPilot: Content script response:", response);
+        if (response.status === "error") {
+          console.error("FlowPilot: Content script reported error:", response.error);
+          stopWorkflowExecution();
+        }
+      }
+    }
+  });
+}
+
+function ensureContentScriptReady(tabId, callback) {
+  // First check if content script is already ready
+  chrome.tabs.sendMessage(tabId, { type: "ping" }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.log("FlowPilot: Content script not ready, injecting...");
+      
+      // Inject content script
+      chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['content/content.js']
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.error("FlowPilot: Content script injection failed:", chrome.runtime.lastError);
+          stopWorkflowExecution();
+          return;
+        }
+        
+        // Wait for script to load and verify it's ready
+        let attempts = 0;
+        const maxAttempts = 5;
+        
+        const checkReady = () => {
+          attempts++;
+          chrome.tabs.sendMessage(tabId, { type: "ping" }, (pingResponse) => {
+            if (chrome.runtime.lastError) {
+              if (attempts < maxAttempts) {
+                console.log(`FlowPilot: Content script not ready yet, attempt ${attempts}/${maxAttempts}`);
+                setTimeout(checkReady, 500);
+              } else {
+                console.error("FlowPilot: Content script failed to initialize after multiple attempts");
+                stopWorkflowExecution();
+              }
+            } else {
+              console.log("FlowPilot: Content script ready after injection");
+              callback();
+            }
+          });
+        };
+        
+        // Start checking after a short delay
+        setTimeout(checkReady, 200);
+      });
+    } else {
+      console.log("FlowPilot: Content script already ready");
+      callback();
     }
   });
 }
@@ -614,7 +779,9 @@ function clearWorkflowState() {
 }
 
 function hideWorkflowStatus() {
-  workflowStatus.style.display = 'none';
+  if (workflowStatus) {
+    workflowStatus.style.display = 'none';
+  }
 }
 
 function showGenericResponse(question, url) {
@@ -628,35 +795,39 @@ function showGenericResponse(question, url) {
 
 // Listen for messages from content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "recordingStopped") {
-    isRecording = false;
-    updateCaptureButton();
-  }
-  if (message.type === "workflowCompleted") {
-    hideWorkflowStatus();
-    isExecuting = false;
-    startWorkflow.style.display = 'flex';
-    stopWorkflow.style.display = 'none';
-    captureSection.style.display = 'flex';
-  }
-  if (message.type === "workflowError") {
-    hideWorkflowStatus();
-    isExecuting = false;
-    startWorkflow.style.display = 'flex';
-    stopWorkflow.style.display = 'none';
-    captureSection.style.display = 'flex';
-    console.error("FlowPilot: Workflow execution error:", message.error);
-  }
-  if (message.type === "stepUpdate") {
-    updateStepStatus(message.stepIndex, message.status, message.message);
-  }
-  if (message.type === "stepStarted") {
-    updateStepStatus(message.stepIndex, 'active', message.message || 'Executing...');
-  }
-  if (message.type === "stepCompleted") {
-    updateStepStatus(message.stepIndex, 'completed', message.message || 'Completed');
-  }
-  if (message.type === "stepError") {
-    updateStepStatus(message.stepIndex, 'error', message.message || 'Error');
+  try {
+    if (message.type === "recordingStopped") {
+      isRecording = false;
+      // updateCaptureButton(); // Removed as capture button is hidden during workflow
+    }
+    if (message.type === "workflowCompleted") {
+      hideWorkflowStatus();
+      isExecuting = false;
+      if (startWorkflow) startWorkflow.style.display = 'flex';
+      if (stopWorkflow) stopWorkflow.style.display = 'none';
+      if (captureSection) captureSection.style.display = 'flex';
+    }
+    if (message.type === "workflowError") {
+      hideWorkflowStatus();
+      isExecuting = false;
+      if (startWorkflow) startWorkflow.style.display = 'flex';
+      if (stopWorkflow) stopWorkflow.style.display = 'none';
+      if (captureSection) captureSection.style.display = 'flex';
+      console.error("FlowPilot: Workflow execution error:", message.error);
+    }
+    if (message.type === "stepUpdate") {
+      updateStepStatus(message.stepIndex, message.status, message.message);
+    }
+    if (message.type === "stepStarted") {
+      updateStepStatus(message.stepIndex, 'active', message.message || 'Executing...');
+    }
+    if (message.type === "stepCompleted") {
+      updateStepStatus(message.stepIndex, 'completed', message.message || 'Completed');
+    }
+    if (message.type === "stepError") {
+      updateStepStatus(message.stepIndex, 'error', message.message || 'Error');
+    }
+  } catch (error) {
+    console.error("FlowPilot: Error in message handler:", error);
   }
 });

@@ -3,7 +3,8 @@
   "name": "FlowPilot",
   "version": "0.1",
   "description": "Record and replay workflows with a guiding cursor.",
-  "permissions": ["scripting", "activeTab", "storage", "tabs", "sidePanel", "<all_urls>"],
+  "permissions": ["scripting", "activeTab", "storage", "tabs", "sidePanel"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
